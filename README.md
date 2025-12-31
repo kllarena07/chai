@@ -1,0 +1,9 @@
+# Chai ☕️🌿
+
+A framework for creating TUI SSH programs.
+
+Inspired by [bubbletea](https://github.com/charmbracelet/bubbletea).
+
+This framework is powered by [ratatui](https://ratatui.rs/) and [russh](https://docs.rs/russh/latest/russh/server/index.html).
+
+_Made with ❤️ by [krayondev](https://x.com/krayondev)_

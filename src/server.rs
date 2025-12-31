@@ -14,6 +14,7 @@ use russh::{Channel, ChannelId, Pty};
 use russh::{MethodKind, MethodSet, server::*};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tracing::{Level, event};
 
 const ENTER_ALT_SCREEN: &[u8] = b"\x1b[?1049h";
 const EXIT_ALT_SCREEN: &[u8] = b"\x1b[?1049l";
@@ -127,7 +128,7 @@ impl<T: ChaiApp + Send + 'static> AppServer<T> {
             ..Default::default()
         };
 
-        println!("Running Chai Server on port {}", self.port);
+        event!(Level::INFO, "starting chai server on 0.0.0.0:{}", self.port);
         self.run_on_address(Arc::new(config), ("0.0.0.0", self.port))
             .await?;
         Ok(())

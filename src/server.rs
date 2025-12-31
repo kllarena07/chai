@@ -89,7 +89,12 @@ impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
                 for (_, (terminal, app)) in clients.lock().await.iter_mut() {
-                    terminal.draw(|f| app.tick(f)).unwrap();
+                    terminal
+                        .draw(|f| {
+                            app.update();
+                            app.draw(f);
+                        })
+                        .unwrap();
                 }
             }
         });

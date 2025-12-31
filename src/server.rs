@@ -185,8 +185,13 @@ impl<T: ChaiApp + Send + 'static> Handler for AppServer<T> {
         match data {
             // Pressing 'q' closes the connection.
             b"q" => {
-                let reset_sequence = [EXIT_ALT_SCREEN, SHOW_CURSOR].concat();
-                let _ = session.data(channel, reset_sequence.into());
+                if let Err(e) = session.data(channel, EXIT_ALT_SCREEN.into()) {
+                    eprintln!("Failed to exit alternate screen: {:?}", e);
+                }
+
+                if let Err(e) = session.data(channel, SHOW_CURSOR.into()) {
+                    eprintln!("Failed to show cursor: {:?}", e);
+                }
 
                 self.clients.lock().await.remove(&self.id);
                 session.close(channel)?;
@@ -249,15 +254,11 @@ impl<T: ChaiApp + Send + 'static> Handler for AppServer<T> {
 
         session.channel_success(channel)?;
 
-        if let Err(e) = session
-            .handle()
-            .data(channel, ENTER_ALT_SCREEN.into())
-            .await
-        {
+        if let Err(e) = session.data(channel, ENTER_ALT_SCREEN.into()) {
             eprintln!("Failed to enter alternate screen: {:?}", e);
         }
 
-        if let Err(e) = session.handle().data(channel, HIDE_CURSOR.into()).await {
+        if let Err(e) = session.data(channel, HIDE_CURSOR.into()) {
             eprintln!("Failed to hide cursor: {:?}", e);
         }
 

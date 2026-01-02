@@ -28,13 +28,19 @@ struct TerminalHandle {
 }
 
 impl TerminalHandle {
-    async fn start(handle: Handle, channel_id: ChannelId) -> Self {
+    async fn start(handle: Handle, channel_id: ChannelId, username: String, id: usize) -> Self {
         let (sender, mut receiver) = unbounded_channel::<Vec<u8>>();
+        let username_clone = username.clone();
+        let id_clone = id;
         tokio::spawn(async move {
             while let Some(data) = receiver.recv().await {
                 let result = handle.data(channel_id, data.into()).await;
                 if result.is_err() {
-                    eprintln!("Failed to send data: {result:?}");
+                    tracing::error!(
+                        "failed to send data for user {} (id: {}): {result:?}",
+                        username_clone,
+                        id_clone
+                    );
                 }
             }
         });
@@ -116,6 +122,26 @@ impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
     }
 }
 
+impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
+    fn send_data_or_log(
+        &mut self,
+        session: &mut Session,
+        channel: ChannelId,
+        data: &[u8],
+        description: &str,
+    ) {
+        if let Err(e) = session.data(channel, data.into()) {
+            tracing::error!(
+                "failed to {} for user {} (id: {}): {:?}",
+                description,
+                self.username,
+                self.id,
+                e
+            );
+        }
+    }
+}
+
 impl<T: ChaiApp + Send + 'static> Server for ChaiServer<T> {
     type Handler = Self;
     fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
@@ -134,7 +160,13 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
         tracing::info!("{} (id: {}) opened a channel", self.username, self.id);
-        let terminal_handle = TerminalHandle::start(session.handle(), channel.id()).await;
+        let terminal_handle = TerminalHandle::start(
+            session.handle(),
+            channel.id(),
+            self.username.clone(),
+            self.id,
+        )
+        .await;
 
         let backend = CrosstermBackend::new(terminal_handle);
 
@@ -171,13 +203,8 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
         match data {
             // Pressing 'q' closes the connection.
             b"q" => {
-                if let Err(e) = session.data(channel, EXIT_ALT_SCREEN.into()) {
-                    eprintln!("Failed to exit alternate screen: {:?}", e);
-                }
-
-                if let Err(e) = session.data(channel, SHOW_CURSOR.into()) {
-                    eprintln!("Failed to show cursor: {:?}", e);
-                }
+                self.send_data_or_log(session, channel, EXIT_ALT_SCREEN, "exit alternate screen");
+                self.send_data_or_log(session, channel, SHOW_CURSOR, "show cursor");
 
                 self.clients.lock().await.remove(&self.id);
                 session.close(channel)?;
@@ -233,19 +260,16 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
             height: row_height as u16,
         };
 
-        let mut clients = self.clients.lock().await;
-        let (terminal, _) = clients.get_mut(&self.id).unwrap();
-        terminal.resize(rect)?;
+        {
+            let mut clients = self.clients.lock().await;
+            let (terminal, _) = clients.get_mut(&self.id).unwrap();
+            terminal.resize(rect)?;
+        }
 
         session.channel_success(channel)?;
 
-        if let Err(e) = session.data(channel, ENTER_ALT_SCREEN.into()) {
-            eprintln!("Failed to enter alternate screen: {:?}", e);
-        }
-
-        if let Err(e) = session.data(channel, HIDE_CURSOR.into()) {
-            eprintln!("Failed to hide cursor: {:?}", e);
-        }
+        self.send_data_or_log(session, channel, ENTER_ALT_SCREEN, "enter alternate screen");
+        self.send_data_or_log(session, channel, HIDE_CURSOR, "hide cursor");
 
         Ok(())
     }

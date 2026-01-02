@@ -13,7 +13,6 @@ use russh::server::*;
 use russh::{Channel, ChannelId, Pty};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tracing::{Level, event};
 
 const ENTER_ALT_SCREEN: &[u8] = b"\x1b[?1049h";
 const EXIT_ALT_SCREEN: &[u8] = b"\x1b[?1049l";
@@ -71,6 +70,7 @@ pub struct ChaiServer<T: ChaiApp + Send + 'static> {
     clients: Arc<Mutex<HashMap<usize, (SshTerminal, T)>>>,
     port: u16,
     id: usize,
+    username: String,
 }
 
 impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
@@ -79,10 +79,20 @@ impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
             clients: Arc::new(Mutex::new(HashMap::new())),
             port,
             id: 0,
+            username: String::new(),
         }
     }
 
     pub async fn run(&mut self, config: Config) -> Result<(), anyhow::Error> {
+        let subscriber = tracing_subscriber::fmt()
+            .compact()
+            .with_file(true)
+            .with_line_number(true)
+            .with_target(true)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
         let clients = self.clients.clone();
         tokio::spawn(async move {
             loop {
@@ -99,7 +109,7 @@ impl<T: ChaiApp + Send + 'static> ChaiServer<T> {
             }
         });
 
-        event!(Level::INFO, "starting chai server on 0.0.0.0:{}", self.port);
+        tracing::info!("starting server on 0.0.0.0:{}", self.port);
         self.run_on_address(Arc::new(config), ("0.0.0.0", self.port))
             .await?;
         Ok(())
@@ -123,6 +133,7 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
         channel: Channel<Msg>,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        tracing::info!("{} (id: {}) opened a channel", self.username, self.id);
         let terminal_handle = TerminalHandle::start(session.handle(), channel.id()).await;
 
         let backend = CrosstermBackend::new(terminal_handle);
@@ -141,11 +152,13 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
         Ok(true)
     }
 
-    async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+    async fn auth_publickey(&mut self, user: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+        self.username = user.to_string();
         Ok(Auth::Accept)
     }
 
-    async fn auth_none(&mut self, _: &str) -> Result<Auth, Self::Error> {
+    async fn auth_none(&mut self, user: &str) -> Result<Auth, Self::Error> {
+        self.username = user.to_string();
         Ok(Auth::Accept)
     }
 
@@ -242,6 +255,7 @@ impl<T: ChaiApp + Send + 'static> Handler for ChaiServer<T> {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        tracing::info!("{} (id: {}) closed a channel", self.username, self.id);
         let reset_sequence = [EXIT_ALT_SCREEN, SHOW_CURSOR].concat();
         let _ = session.data(channel, reset_sequence.into());
 
